@@ -182,3 +182,4 @@ plt.legend()
 plt.title("Training vs validation loss")
 
 plt.show()
+
