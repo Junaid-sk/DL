@@ -1,0 +1,243 @@
+Making a pre-trained data model
+
+
+from IPython.core.interactiveshell import InteractiveShellimport seaborn as sns# PyTorchfrom torchvision import transforms, datasets, modelsimport torchfrom torch import optim, cudafrom torch.utils.data import DataLoader, samplerimport torch.nn as nn
+import warningswarnings.filterwarnings('ignore', category=FutureWarning)
+# Data science toolsimport numpy as npimport pandas as pdimport os
+# Image manipulationsfrom PIL import Image# Useful for examining networkfrom torchsummary import summary# Timing utilityfrom timeit import default_timer as timer
+# Visualizationsimport matplotlib.pyplot as plt%matplotlib inlineplt.rcParams['font.size'] = 14
+# Printing out all outputsInteractiveShell.ast_node_interactivity = 'all'
+
+# Location of datadatadir = '/home/wjk68/'traindir = datadir + 'train/'validdir = datadir + 'valid/'testdir = datadir + 'test/'
+save_file_name = 'vgg16-transfer-4.pt'checkpoint_path = 'vgg16-transfer-4.pth'
+# Change to fit hardwarebatch_size = 128
+# Whether to train on a gputrain_on_gpu = cuda.is_available()print(f'Train on gpu: {train_on_gpu}')
+# Number of gpusif train_on_gpu:
+    gpu_count = cuda.device_count()
+    print(f'{gpu_count} gpus detected.')
+    if gpu_count > 1:
+        multi_gpu = True
+    else:
+        multi_gpu = False
+
+
+
+
+/code
+# Empty listscategories = []img_categories = []n_train = []n_valid = []n_test = []hs = []ws = []
+# Iterate through each categoryfor d in os.listdir(traindir):
+    categories.append(d)
+
+    # Number of each image
+    train_imgs = os.listdir(traindir + d)
+    valid_imgs = os.listdir(validdir + d)
+    test_imgs = os.listdir(testdir + d)
+    n_train.append(len(train_imgs))
+    n_valid.append(len(valid_imgs))
+    n_test.append(len(test_imgs))
+
+    # Find stats for train images
+    for i in train_imgs:
+        img_categories.append(d)
+        img = Image.open(traindir + d + '/' + i)
+        img_array = np.array(img)
+        # Shape
+        hs.append(img_array.shape[0])
+        ws.append(img_array.shape[1])
+# Dataframe of categoriescat_df = pd.DataFrame({'category': categories,
+                       'n_train': n_train,
+                       'n_valid': n_valid, 'n_test': n_test}).\
+    sort_values('category')
+# Dataframe of training imagesimage_df = pd.DataFrame({
+    'category': img_categories,
+    'height': hs,
+    'width': ws})
+cat_df.sort_values('n_train', ascending=False, inplace=True)cat_df.head()cat_df.tail()
+
+
+
+
+
+
+
+Distribution of Image
+/code
+
+cat_df.set_index('category')['n_train'].plot.bar(
+color='r', figsize=(20, 6))plt.xticks(rotation=80)plt.ylabel('Count')plt.title('Training Images by Category')
+
+
+
+# Only top 50 categoriescat_df.set_index('category').iloc[:50]['n_train'].plot.bar(
+    color='r', figsize=(20, 6))plt.xticks(rotation=80)plt.ylabel('Count')plt.title('Training Images by Category')
+
+
+
+
+img_dsc = image_df.groupby('category').describe()img_dsc.head()
+
+
+
+
+
+plt.figure(figsize=(10, 6))sns.kdeplot(
+    img_dsc['height']['mean'], label='Average Height')sns.kdeplot(
+    img_dsc['width']['mean'], label='Average Width')plt.xlabel('Pixels')plt.ylabel('Density')plt.title('Average Size Distribution')
+
+
+
+
+
+def imshow(image):
+    """Display image"""
+    plt.figure(figsize=(6, 6))
+    plt.imshow(image)
+    plt.axis('off')
+    plt.show()
+    
+# Example imagex = Image.open(traindir + 'ewer/image_0002.jpg')np.array(x).shapeimshow(x)
+
+
+
+
+
+
+model_options = pd.read_csv('models.csv')model_options
+
+
+
+
+
+model = models.vgg16(pretrained=True)model
+
+
+
+
+
+param.requires_grad = False
+
+
+
+
+
+n_inputs = model.classifier[6].in_features
+# Add on classifiermodel.classifier[6] = nn.Sequential(
+    nn.Linear(n_inputs, 256), nn.ReLU(), nn.Dropout(0.4),
+    nn.Linear(256, n_classes), nn.LogSoftmax(dim=1))
+model.classifier
+
+
+
+
+total_params = sum(p.numel() for p in model.parameters())print(f'{total_params:,} total parameters.')total_trainable_params = sum(
+    p.numel() for p in model.parameters() if p.requires_grad)print(f'{total_trainable_params:,} training parameters.')
+
+
+
+
+
+if train_on_gpu:
+    model = model.to('cuda')
+if multi_gpu:
+    model = nn.DataParallel(model)
+
+def get_pretrained_model(model_name):
+    """Retrieve a pre-trained model from torchvision
+    Params    -------        model_name (str): name of the model (currently only accepts vgg16 and resnet50)
+    Return    --------        model (PyTorch model): cnn
+    """
+
+    if model_name == 'vgg16':
+        model = models.vgg16(pretrained=True)
+
+        # Freeze early layers
+        for param in model.parameters():
+            param.requires_grad = False
+        n_inputs = model.classifier[6].in_features
+
+        # Add on classifier
+        model.classifier[6] = nn.Sequential(
+            nn.Linear(n_inputs, 256), nn.ReLU(), nn.Dropout(0.2),
+            nn.Linear(256, n_classes), nn.LogSoftmax(dim=1))
+
+    elif model_name == 'resnet50':
+        model = models.resnet50(pretrained=True)
+
+        for param in model.parameters():
+            param.requires_grad = False
+
+        n_inputs = model.fc.in_features
+        model.fc = nn.Sequential(
+            nn.Linear(n_inputs, 256), nn.ReLU(), nn.Dropout(0.2),
+            nn.Linear(256, n_classes), nn.LogSoftmax(dim=1))
+
+
+
+
+
+    # Move to gpu and parallelize
+    if train_on_gpu:
+        model = model.to('cuda')
+
+    if multi_gpu:
+        model = nn.DataParallel(model)
+
+return model
+
+
+
+model = get_pretrained_model('vgg16')if multi_gpu:
+    summary(
+        model.module,
+        input_size=(3, 224, 224),
+        batch_size=batch_size,
+        device='cuda')else:
+    summary(
+        model, input_size=(3, 224, 224), batch_size=batch_size, device='cuda')
+
+
+
+
+
+if multi_gpu:
+    print(model.module.classifier[6])else:
+    print(model.classifier[6])
+
+
+
+
+
+
+model.class_to_idx = data['train'].class_to_idxmodel.idx_to_class = {
+    idx: class_
+    for class_, idx in model.class_to_idx.items()}
+list(model.idx_to_class.items())[:10]
+
+
+
+
+
+
+criterion = nn.NLLLoss()optimizer = optim.Adam(model.parameters())
+
+for p in optimizer.param_groups[0]['params']:
+    if p.requires_grad:
+        print(p.shape)
+
+
+
+
+
+plt.figure(figsize=(8, 6))for c in ['train_loss', 'valid_loss']:
+    plt.plot(
+        history[c], label=c)plt.legend()plt.xlabel('Epoch')plt.ylabel('Average Negative Log Likelihood')plt.title('Training and Validation Losses')
+
+
+
+
+
+plt.figure(figsize=(8, 6))for c in ['train_acc', 'valid_acc']:
+    plt.plot(
+        100 * history[c], label=c)plt.legend()plt.xlabel('Epoch')plt.ylabel('Average Accuracy')plt.title('Training and Validation Accuracy')
+
+
